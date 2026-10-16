@@ -141,6 +141,8 @@ def import_cmd(
         typer.echo(
             f"  skipped {imported.skipped_without_columns} node(s) without catalog columns"
         )
+    for skipped_foreign_key in imported.skipped_foreign_keys:
+        typer.echo(f"  skipped foreign key {skipped_foreign_key}")
     if dry_run:
         return
 

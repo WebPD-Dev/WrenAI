@@ -17,6 +17,7 @@ Wren stores imported dbt context in regular Wren project files:
 | Active dbt target | Wren connection profile | Reuses the same warehouse connection target dbt uses |
 | Model and source nodes | `models/*/metadata.yml` | Preserves model names, table references, descriptions, layers, and columns |
 | `relationships` tests | `relationships.yml` | Turns tested dbt refs into explicit Wren join paths |
+| `foreign_key` constraints | `relationships.yml` | Turns declared foreign keys, including multi-column ones, into Wren join paths |
 | `not_null`, `unique`, `accepted_values` tests | Model and column metadata | Gives agents verified constraints and useful filter values |
 | Test results | `instructions.md` | Surfaces verified constraints and warnings for agent workflows |
 | Model graph and metadata | `queries.yml` | Seeds memory with dbt-aware example questions and SQL |
@@ -100,7 +101,7 @@ Generated files:
 |------|-------------|
 | `wren_project.yml` | Project metadata, data source, and dbt binding |
 | `models/*/metadata.yml` | Imported dbt models and sources |
-| `relationships.yml` | Joins inferred from dbt `relationships` tests |
+| `relationships.yml` | Joins inferred from dbt `relationships` tests and `foreign_key` constraints |
 | `instructions.md` | dbt test summary, verified constraints, and warnings |
 | `AGENTS.md` | Agent workflow guidance |
 | `queries.yml` | dbt-derived seed NL-SQL pairs for memory indexing |
@@ -119,6 +120,34 @@ Wren imports dbt tests as semantic metadata:
 | `relationships` | An entry in `relationships.yml` |
 
 Relationship tests stay in `relationships.yml`; the importer does not stamp relationship dereferences onto FK columns.
+
+## Foreign Key Constraints
+
+Each dbt `foreign_key` constraint becomes a `MANY_TO_ONE` entry in `relationships.yml`. Both forms are read: a model-level constraint with `columns`, and a column-level one under the column it constrains. A key over several columns becomes **one** relationship whose condition joins each column pair with `AND`:
+
+```yaml
+# dbt: models/schema.yml
+models:
+  - name: order_lines
+    constraints:
+      - type: foreign_key
+        columns: [part_id, supplier_id]
+        to: ref('parts')
+        to_columns: [part_id, supplier_id]
+```
+
+```yaml
+# Wren: relationships.yml
+relationships:
+  - name: order_lines_to_parts
+    models: [order_lines, parts]
+    join_type: MANY_TO_ONE
+    condition: order_lines.part_id = parts.part_id AND order_lines.supplier_id = parts.supplier_id
+    properties:
+      source: dbt_constraint
+```
+
+The importer needs `to` and `to_columns`, which dbt has supported since 1.9, and a `manifest.json` written by `dbt build` or `dbt docs generate`; there `to` holds the referenced relation name. After a bare `dbt parse` it still reads `ref('parts')` and cannot be matched. A constraint on the same key as a `relationships` test yields a single relationship. `wren context import dbt` lists every foreign key it skips, with the reason: an `expression`-only constraint from older dbt, a `to` that matches no imported model or source, `columns` and `to_columns` of different lengths, or a column missing from `catalog.json`.
 
 ## Build and Query
 

@@ -6,7 +6,7 @@ import base64
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +100,7 @@ class DbtProjectImport:
     skipped_ephemeral: int
     skipped_without_columns: int
     relationship_count: int = 0
+    skipped_foreign_keys: list[str] = field(default_factory=list)
 
 
 def default_wren_profile_name(target: DbtTarget) -> str:
@@ -349,6 +350,9 @@ def convert_dbt_project_to_wren_project(
         skipped_no_columns,
     ) = _build_imported_models(artifacts)
     relationships, test_events = _apply_dbt_test_enrichment(artifacts, imported_models)
+    skipped_foreign_keys = _apply_dbt_foreign_key_constraints(
+        artifacts, imported_models, relationships
+    )
     query_pairs = _build_dbt_query_pairs(
         imported_models,
         relationships,
@@ -448,6 +452,7 @@ def convert_dbt_project_to_wren_project(
         skipped_ephemeral=skipped_ephemeral,
         skipped_without_columns=skipped_no_columns,
         relationship_count=len(relationships),
+        skipped_foreign_keys=skipped_foreign_keys,
     )
 
 
@@ -784,7 +789,7 @@ def _apply_dbt_test_enrichment(
     }
     status_by_unique_id = _build_run_results_index(artifacts.run_results)
     relationships: list[dict[str, Any]] = []
-    relationship_keys: dict[tuple[str, str, str, str], str] = {}
+    relationship_keys: dict[tuple[str, str, str], str] = {}
     test_events: list[dict[str, Any]] = []
 
     for unique_id, node in sorted(artifacts.manifest.get("nodes", {}).items()):
@@ -835,9 +840,11 @@ def _apply_dbt_test_enrichment(
                         relationships,
                         relationship_keys,
                         model,
-                        column["name"],
+                        [column["name"]],
                         target_model,
-                        target_field,
+                        [target_field],
+                        join_type=_infer_join_type(model, target_model),
+                        source="dbt_test",
                     )
                     # Do NOT stamp column["relationship"] — the relationship is
                     # already recorded in relationships.yml. Putting it on the
@@ -852,6 +859,104 @@ def _apply_dbt_test_enrichment(
     _finalize_column_tests(imported_models)
     _sort_relationships(relationships)
     return relationships, test_events
+
+
+def _apply_dbt_foreign_key_constraints(
+    artifacts: DbtArtifacts,
+    imported_models: list[dict[str, Any]],
+    relationships: list[dict[str, Any]],
+) -> list[str]:
+    """Add a MANY_TO_ONE relationship for each dbt ``foreign_key`` constraint.
+
+    dbt records a model-level constraint with ``columns``, ``to`` and
+    ``to_columns``, and a column-level one under ``columns.<name>.constraints``
+    without ``columns``. After ``dbt build`` or ``dbt docs generate``, ``to``
+    holds the referenced node's ``relation_name``. A key over several columns
+    becomes one relationship. Constraints that already match a relationship
+    from a dbt ``relationships`` test are not added twice.
+
+    Returns one line per constraint that could not be imported.
+    """
+    model_by_unique_id = {
+        model["properties"]["dbt_unique_id"]: model for model in imported_models
+    }
+    model_by_relation = {
+        node["relation_name"]: model_by_unique_id[unique_id]
+        for nodes in (
+            artifacts.manifest.get("nodes", {}),
+            artifacts.manifest.get("sources", {}),
+        )
+        for unique_id, node in nodes.items()
+        if unique_id in model_by_unique_id and node.get("relation_name")
+    }
+    relationship_keys = {
+        (rel["models"][0], rel["models"][1], rel["condition"]): rel["name"]
+        for rel in relationships
+    }
+    skipped: list[str] = []
+
+    for unique_id, node in sorted(artifacts.manifest.get("nodes", {}).items()):
+        model = model_by_unique_id.get(unique_id)
+        if model is None or node.get("resource_type") != "model":
+            continue
+        constraints = [
+            (list(constraint.get("columns") or []), constraint)
+            for constraint in node.get("constraints") or []
+        ]
+        for column_name, column in (node.get("columns") or {}).items():
+            constraints.extend(
+                ([column_name], constraint)
+                for constraint in column.get("constraints") or []
+            )
+
+        for columns, constraint in constraints:
+            if constraint.get("type") != "foreign_key":
+                continue
+            to = constraint.get("to")
+            to_columns = list(constraint.get("to_columns") or [])
+            target = to or constraint.get("expression") or "?"
+            label = f"{model['name']}({', '.join(columns)}) -> {target}"
+            if not to:
+                skipped.append(
+                    f"{label}: no `to`; the `expression`-only form "
+                    "(dbt < 1.9) is not imported"
+                )
+                continue
+            target_model = model_by_relation.get(to)
+            if target_model is None:
+                skipped.append(
+                    f"{label}: `to` matches no imported model or source "
+                    "(run `dbt docs generate` so it holds the relation name)"
+                )
+                continue
+            if not columns or len(columns) != len(to_columns):
+                skipped.append(
+                    f"{label}: `columns` and `to_columns` need the same, "
+                    "non-zero length"
+                )
+                continue
+            missing = [
+                f"{owner['name']}.{name}"
+                for owner, names in ((model, columns), (target_model, to_columns))
+                for name in names
+                if _find_column(owner, name) is None
+            ]
+            if missing:
+                skipped.append(f"{label}: no catalog column {', '.join(missing)}")
+                continue
+            _ensure_relationship(
+                relationships,
+                relationship_keys,
+                model,
+                columns,
+                target_model,
+                to_columns,
+                join_type="MANY_TO_ONE",
+                source="dbt_constraint",
+            )
+
+    _sort_relationships(relationships)
+    return skipped
 
 
 def _build_model_metadata(
@@ -1111,13 +1216,26 @@ def _resolve_relationship_target_uid(
 
 def _ensure_relationship(
     relationships: list[dict[str, Any]],
-    relationship_keys: dict[tuple[str, str, str, str], str],
+    relationship_keys: dict[tuple[str, str, str], str],
     model: dict[str, Any],
-    column_name: str,
+    columns: list[str],
     target_model: dict[str, Any],
-    target_field: str,
+    target_columns: list[str],
+    *,
+    join_type: str,
+    source: str,
 ) -> str:
-    key = (model["name"], column_name, target_model["name"], target_field)
+    """Add the relationship joining ``columns`` to ``target_columns`` pairwise.
+
+    A multi-column key yields one condition that ANDs an equality per pair.
+    Returns the name of the new relationship, or of the existing one with the
+    same models and condition.
+    """
+    condition = " AND ".join(
+        f"{model['name']}.{column} = {target_model['name']}.{target_column}"
+        for column, target_column in zip(columns, target_columns)
+    )
+    key = (model["name"], target_model["name"], condition)
     existing = relationship_keys.get(key)
     if existing:
         return existing
@@ -1135,11 +1253,9 @@ def _ensure_relationship(
         {
             "name": rel_name,
             "models": [model["name"], target_model["name"]],
-            "join_type": _infer_join_type(model, target_model),
-            "condition": (
-                f"{model['name']}.{column_name} = {target_model['name']}.{target_field}"
-            ),
-            "properties": {"source": "dbt_test"},
+            "join_type": join_type,
+            "condition": condition,
+            "properties": {"source": source},
         }
     )
     return rel_name
