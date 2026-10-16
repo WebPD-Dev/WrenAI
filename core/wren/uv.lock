@@ -3618,11 +3618,13 @@ wheels = [
 name = "wren-core-py"
 version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/c1/76cc0126ee2eea93d3b7921e91055e0a5b3b15cc29b7e398d6de0772d85a/wren_core_py-0.8.1.tar.gz", hash = "sha256:5cf2f6c299fe68f718e833b0f5ab26c20d36257f0601842be50966b3dcf44108", size = 233465, upload-time = "2026-10-14T10:38:28.845Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/b0/1dbfdccfb27a7cfa3f2d2ec26ba5d4fd90af00487a0b1151eff6a4f5d79b/wren_core_py-0.8.1-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:eed71160e6f2aa0323071fa773e354fa6dfd6711d9731b6c0bf17d48b0003bff", size = 48423777, upload-time = "2026-10-14T10:38:09.737Z" },
     { url = "https://files.pythonhosted.org/packages/98/ea/fab456a1e86eba8704eeb60717b2590b414a47206edb048041f97e23e474/wren_core_py-0.8.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:264331c7359c05744da661dc0402a3b96c60c3a5747b306398c8193653fc2263", size = 46492607, upload-time = "2026-10-14T10:38:13.688Z" },
     { url = "https://files.pythonhosted.org/packages/6f/55/6d41c0fc14f9b7e2bd809461ee10c1c52b93979240db2c06f8f2c4dc1b65/wren_core_py-0.8.1-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:afa541e5c095d4b144db0b7fea9d63fe268c59cbb0a459c1326a624c7687419e", size = 53629869, upload-time = "2026-10-14T10:38:17.942Z" },
     { url = "https://files.pythonhosted.org/packages/6b/59/fb4cb1e4ceb45733c2b040b4e3a2a66139ac631b043369f5e03cc27a5b16/wren_core_py-0.8.1-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:781baa9188845451d39f295083e5e07172ec2a186b9fa71d7df861c1982b2f6b", size = 51828419, upload-time = "2026-10-14T10:38:22.355Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/db/60eba335820e848339eb3e1ee8b5485446ec8a50798683f8984ff614ab75/wren_core_py-0.8.1-cp311-abi3-win_amd64.whl", hash = "sha256:13505326d61528eaf3bcc1280e3205d36efe38b101ff87ddeab57c035e3c4309", size = 46022507, upload-time = "2026-10-14T10:38:26.585Z" },
 ]
 
 [[package]]
@@ -3774,7 +3776,7 @@ requires-dist = [
     { name = "lancedb", marker = "extra == 'memory-onnx'", specifier = ">=0.6" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "lxml", specifier = ">=6.1.0" },
-    { name = "mcp", extras = ["cli"], marker = "extra == 'mcp'", specifier = ">=1.19" },
+    { name = "mcp", extras = ["cli"], marker = "extra == 'mcp'", specifier = ">=1.19,<2" },
     { name = "mysqlclient", marker = "extra == 'mysql'", specifier = ">=2.2" },
     { name = "numpy", marker = "extra == 'memory-onnx'", specifier = ">=1.24" },
     { name = "onnxruntime", marker = "extra == 'memory-onnx'", specifier = ">=1.17" },
