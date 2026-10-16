@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from wren.context import (
     UpgradeError,
@@ -740,6 +741,128 @@ def test_validate_relationship_unknown_model(tmp_path):
     )
     errors = validate_project(tmp_path)
     assert any("unknown model" in e.message for e in errors)
+
+
+def _make_relationship_project(tmp_path: Path, condition: str) -> Path:
+    """Two models joined on a two-column key by a relationship with ``condition``."""
+    _make_v2_project(tmp_path, schema_version=4)
+    for name, columns in (
+        ("order_lines", ("line_id", "part_id", "supplier_id")),
+        ("parts", ("part_id", "supplier_id")),
+    ):
+        d = tmp_path / "models" / name
+        d.mkdir(parents=True)
+        (d / "metadata.yml").write_text(
+            f"name: {name}\ntable_reference:\n  table: {name}\ncolumns:\n"
+            + "".join(f"  - name: {c}\n    type: INTEGER\n" for c in columns)
+        )
+    (tmp_path / "relationships.yml").write_text(
+        yaml.safe_dump(
+            {
+                "relationships": [
+                    {
+                        "name": "order_lines_parts",
+                        "models": ["order_lines", "parts"],
+                        "join_type": "MANY_TO_ONE",
+                        "condition": condition,
+                    }
+                ]
+            }
+        )
+    )
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "order_lines.part_id = parts.part_id "
+        "AND order_lines.supplier_id = parts.supplier_id",
+        "(order_lines.part_id = parts.part_id) "
+        "AND (order_lines.supplier_id = parts.supplier_id)",
+        "parts.part_id = order_lines.part_id",
+        '"order_lines"."part_id" = "parts"."part_id"',
+        "`order_lines`.`part_id` = `parts`.`part_id`",
+    ],
+    ids=["composite", "parenthesized", "reversed", "double-quoted", "backticked"],
+)
+def test_validate_relationship_condition_accepts(tmp_path, condition):
+    _make_relationship_project(tmp_path, condition)
+
+    errors = validate_project(tmp_path)
+
+    assert [(e.level, e.message) for e in errors] == []
+
+
+@pytest.mark.parametrize(
+    ("condition", "message"),
+    [
+        (
+            "order_lines.part_id = parts.part_id "
+            "OR order_lines.supplier_id = parts.supplier_id",
+            "condition must be one or more 'model.column = model.column' "
+            "equalities joined with AND",
+        ),
+        (
+            "order_lines.part_id = parts.part_id "
+            "AND order_lines.supplier_id > parts.supplier_id",
+            "condition must be one or more 'model.column = model.column' "
+            "equalities joined with AND",
+        ),
+        (
+            "order_lines.part_id = 1",
+            "condition must be one or more 'model.column = model.column' "
+            "equalities joined with AND",
+        ),
+        (
+            "order_lines.nope = parts.part_id",
+            "column 'nope' not found in model 'order_lines'",
+        ),
+        (
+            "order_lines.part_id = customers.part_id",
+            "condition references 'customers', which is not one of the "
+            "relationship's models",
+        ),
+        (
+            "ORDER_LINES.part_id = parts.part_id",
+            "condition references 'ORDER_LINES', which is not one of the "
+            "relationship's models",
+        ),
+        ("part_id = parts.part_id", "'part_id' must be qualified as model.column"),
+        (
+            "order_lines.part_id = order_lines.supplier_id",
+            "'order_lines.part_id = order_lines.supplier_id' must compare a "
+            "column of each model (order_lines, parts)",
+        ),
+    ],
+    ids=[
+        "or",
+        "non-equality",
+        "literal",
+        "unknown-column",
+        "foreign-model",
+        "wrong-case",
+        "unqualified",
+        "same-model",
+    ],
+)
+def test_validate_relationship_condition_rejects(tmp_path, condition, message):
+    _make_relationship_project(tmp_path, condition)
+
+    errors = validate_project(tmp_path)
+
+    assert [(e.level, e.path, e.message) for e in errors] == [
+        ("error", "relationships > order_lines_parts", message)
+    ]
+
+
+def test_validate_relationship_condition_unparsable_is_a_warning(tmp_path):
+    _make_relationship_project(tmp_path, "order_lines.part_id = = parts.part_id")
+
+    errors = validate_project(tmp_path)
+
+    assert [e.level for e in errors] == ["warning"]
+    assert errors[0].message.startswith("could not parse condition: ")
 
 
 def test_validate_view_no_statement(tmp_path):

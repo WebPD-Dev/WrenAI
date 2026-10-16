@@ -994,6 +994,103 @@ class ValidationError:
         return f"[{self.level.upper()}] {self.path}: {self.message}"
 
 
+def _relationship_condition_errors(
+    where: str,
+    condition: str,
+    rel_models: list,
+    model_columns: dict[str, set[str]],
+) -> list[ValidationError]:
+    """Check a relationship condition the way wren-core's join planner reads it.
+
+    The engine (``collect_join_keys``) accepts one or more
+    ``model.column = model.column`` equalities joined with AND and resolves the
+    names case-sensitively. A condition it cannot use fails only at query time,
+    and an equality between two columns of the same model plans without error
+    but returns NULLs, so report both here.
+    """
+    import sqlglot  # noqa: PLC0415
+    from sqlglot import exp  # noqa: PLC0415
+
+    # The engine's parser takes both "double-quoted" and `backticked` names; the
+    # default sqlglot dialect reads only the former, so retry with MySQL's.
+    for dialect in (None, "mysql"):
+        try:
+            tree = sqlglot.parse_one(condition, read=dialect)
+            break
+        except sqlglot.errors.SqlglotError as e:
+            parse_error = e
+    else:
+        return [
+            ValidationError(
+                "warning",
+                where,
+                f"could not parse condition: {str(parse_error).splitlines()[0]}",
+            )
+        ]
+
+    def _unparen(node: exp.Expression) -> exp.Expression:
+        while isinstance(node, exp.Paren):
+            node = node.this
+        return node
+
+    def _equalities(node: exp.Expression) -> list[exp.EQ] | None:
+        node = _unparen(node)
+        if isinstance(node, exp.And):
+            left, right = _equalities(node.left), _equalities(node.right)
+            return None if left is None or right is None else left + right
+        if isinstance(node, exp.EQ) and all(
+            isinstance(_unparen(side), exp.Column) for side in (node.left, node.right)
+        ):
+            return [node]
+        return None
+
+    equalities = _equalities(tree)
+    if equalities is None:
+        return [
+            ValidationError(
+                "error",
+                where,
+                "condition must be one or more 'model.column = model.column' "
+                "equalities joined with AND",
+            )
+        ]
+
+    messages: list[str] = []
+
+    def _report(message: str) -> None:
+        if message not in messages:
+            messages.append(message)
+
+    distinct_models = {m for m in rel_models if isinstance(m, str)}
+    for eq in equalities:
+        sides = [_unparen(eq.left), _unparen(eq.right)]
+        resolved = True
+        for col in sides:
+            if not col.table:
+                _report(f"'{col.sql()}' must be qualified as model.column")
+                resolved = False
+            elif col.table not in distinct_models:
+                _report(
+                    f"condition references '{col.table}', which is not one of "
+                    "the relationship's models"
+                )
+                resolved = False
+            elif (
+                col.table in model_columns and col.name not in model_columns[col.table]
+            ):
+                _report(f"column '{col.name}' not found in model '{col.table}'")
+        if (
+            resolved
+            and len(distinct_models) == 2
+            and {col.table for col in sides} != distinct_models
+        ):
+            _report(
+                f"'{eq.sql()}' must compare a column of each model "
+                f"({', '.join(sorted(distinct_models))})"
+            )
+    return [ValidationError("error", where, message) for message in messages]
+
+
 def validate_project(project_path: Path) -> list[ValidationError]:
     """Validate project-level structure.
 
@@ -1002,7 +1099,8 @@ def validate_project(project_path: Path) -> list[ValidationError]:
     1. Every model has a name and at least one column
     2. Every column has name and type
     3. Model has exactly one of table_reference or ref_sql (not both, not neither)
-    4. Relationship references existing model names
+    4. Relationship references existing model names, and its condition is one
+       or more model.column equalities between its two models, joined with AND
     5. No duplicate model/view names
     6. Views have a statement
     7. primary_key column exists in the model's columns
@@ -1086,6 +1184,8 @@ def validate_project(project_path: Path) -> list[ValidationError]:
 
     model_names: set[str] = set()
     view_names: set[str] = set()
+    # model name -> column names, for checking relationship conditions.
+    model_columns: dict[str, set[str]] = {}
 
     # Hand-edited model YAML may set columns: to a non-list (e.g. a bare
     # string). load_models() normalises to list[dict], but validate_project
@@ -1258,6 +1358,7 @@ def validate_project(project_path: Path) -> list[ValidationError]:
                         "column missing 'type'",
                     )
                 )
+        model_columns[name] = col_names
 
         pk = model.get("primary_key")
         if pk is None:
@@ -1497,10 +1598,20 @@ def validate_project(project_path: Path) -> list[ValidationError]:
                         f"references unknown model '{m}'",
                     )
                 )
-        if not rel.get("condition"):
+        condition = rel.get("condition")
+        if not condition:
             errors.append(
                 ValidationError(
                     "warning", f"relationships > {rel_name}", "missing join condition"
+                )
+            )
+        elif isinstance(condition, str):
+            errors.extend(
+                _relationship_condition_errors(
+                    f"relationships > {rel_name}",
+                    condition,
+                    ref_models,
+                    model_columns,
                 )
             )
         if not rel.get("join_type"):

@@ -234,7 +234,7 @@ relationships:
 | `join_type` | enum | yes | `ONE_TO_ONE`, `ONE_TO_MANY`, `MANY_TO_ONE`, or `MANY_TO_MANY`. |
 | `condition` | string | yes | One or more `model.column = model.column` equalities, joined with `AND`. |
 
-The first model in `models` should appear on the left side of each equality. Only equalities combined with `AND` are supported. A condition using `OR` or any other comparison fails at query time with `Join condition must be a conjunction of column equalities`; `wren context validate` does not check the condition.
+The first model in `models` should appear on the left side of each equality. Only equalities combined with `AND` are supported, and model and column names are case-sensitive. `wren context validate` reports a condition the engine cannot use as an error, which also stops `wren context build`. That covers `OR` or any other comparison, a column that is unqualified or missing from its model, a model that is not in `models`, and an equality that does not compare a column of each of the two models (the engine plans that one without error but returns NULLs).
 
 ### Composite keys
 

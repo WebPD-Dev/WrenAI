@@ -278,6 +278,8 @@ If validation fails, fix the reported issues and re-run. Common errors:
 - Duplicate model/column names
 - Missing primary key
 - Relationship referencing non-existent model
+- Relationship condition that is not `model.column = model.column` equalities
+  joined with `AND` between its two models, or names a missing column
 - Invalid column type (try re-running through `parse_type`)
 
 ## Phase 6 — Initialize memory
