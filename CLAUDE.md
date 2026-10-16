@@ -21,8 +21,11 @@ Everything below was checked against the code on 2026-10-16 (HEAD `caa23ac`,
   purpose. Don't rewrite them to the fork.
 - The cloud checkout is shallow (50 commits). For older history run
   `git fetch --deepen=<n>` or `git fetch --unshallow`.
-- The maintainer writes in Italian, so reply to them in Italian. Code, comments,
-  commit messages, PR text and repo docs stay in English, like the rest of the repo.
+- The maintainer writes in Italian and wants the final result of every task in
+  Italian: replies, summaries, guides and reports, including the comments in example
+  code written for them. Keep English terms only where Italian has no common
+  equivalent, and explain them. Code, code comments, commit messages, PR text and
+  repo docs stay in English, like the rest of the repo.
 - Commits and PR titles use conventional commits. The PR-title validator
   (`.github/workflows/pull-request-title-validator.yaml`) accepts
   `feat fix perf deps revert docs chore refactor test build ci`. Scopes are free-form;
