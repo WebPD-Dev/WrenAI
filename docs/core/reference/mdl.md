@@ -95,7 +95,7 @@ Each model is its own directory under `models/`. A model defines:
 | `table_reference` | one of two | Maps to a physical table (`catalog`, `schema`, `table`). |
 | `ref_sql` | one of two | A SQL SELECT used as the model's data source. |
 | `columns` | yes | List of columns to expose. |
-| `primary_key` | no | Column name uniquely identifying a row; required for `TO_MANY` relationship traversals. |
+| `primary_key` | no | Column name uniquely identifying a row, or a list of column names for a composite key (list form requires `schema_version: 4`); required for `TO_MANY` relationship traversals. |
 | `cached` | no | Whether query results should be cached. Defaults to `false`. |
 | `dialect` | no | SQL dialect of the model's `ref_sql`. Overrides project-level `data_source` for this model. Requires `schema_version: 3`. |
 | `properties` | no | Arbitrary key-value metadata. |
@@ -232,9 +232,34 @@ relationships:
 | `name` | string | yes | Unique relationship identifier. |
 | `models` | array[string] | yes | Exactly two model names `[from, to]`. |
 | `join_type` | enum | yes | `ONE_TO_ONE`, `ONE_TO_MANY`, `MANY_TO_ONE`, or `MANY_TO_MANY`. |
-| `condition` | string | yes | SQL equality condition using `model.column` references on both sides. |
+| `condition` | string | yes | One or more `model.column = model.column` equalities, joined with `AND`. |
 
-The first model in `models` should appear on the left side of the condition. Only equality conditions are supported.
+The first model in `models` should appear on the left side of each equality. Only equalities combined with `AND` are supported. A condition using `OR` or any other comparison fails at query time with `Join condition must be a conjunction of column equalities`; `wren context validate` does not check the condition.
+
+### Composite keys
+
+When a foreign key spans several columns, declare **one** relationship and join every column pair with `AND`. Don't split it into one relationship per column: each of those would join on a single column and multiply rows.
+
+```yaml
+relationships:
+  - name: order_lines_parts
+    models:
+      - order_lines
+      - parts
+    join_type: MANY_TO_ONE
+    condition: >-
+      order_lines.part_id = parts.part_id
+      AND order_lines.supplier_id = parts.supplier_id
+```
+
+Declare the referenced model's key as a list-form `primary_key` (requires `schema_version: 4`). A `TO_MANY` calculated column on a model with a composite primary key groups by, and joins back on, every key column.
+
+```yaml
+# models/parts/metadata.yml
+primary_key:
+  - part_id
+  - supplier_id
+```
 
 For `TO_MANY` relationships, calculated columns that traverse the relationship must use aggregate functions — the engine wraps the join in an aggregate subquery to prevent row multiplication.
 

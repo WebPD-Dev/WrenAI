@@ -222,6 +222,23 @@ relationships:
     condition: "orders.customer_id = customers.customer_id"
 ```
 
+A foreign key over several columns (`constrained_columns` with more than one
+entry) becomes **one** relationship. Pair `constrained_columns[i]` with
+`referred_columns[i]` and join the equalities with `AND`. Never write one
+relationship per column: each would join on a single column and multiply rows.
+
+```yaml
+  - name: order_lines_parts
+    models:
+      - order_lines
+      - parts
+    join_type: many_to_one
+    condition: "order_lines.part_id = parts.part_id AND order_lines.supplier_id = parts.supplier_id"
+```
+
+Write the referenced table's composite primary key as a list in its model
+file (`primary_key: [part_id, supplier_id]`).
+
 Join type mapping:
 - FK table → PK table: `many_to_one`
 - PK table → FK table: `one_to_many`
