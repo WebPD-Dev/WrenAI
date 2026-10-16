@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -18,6 +19,7 @@ from typing import Any, Callable
 
 from loguru import logger
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
 DEFAULT_ROW_LIMIT = 1000
@@ -699,12 +701,49 @@ def build_server(ctx: ServeContext) -> FastMCP:
     return mcp
 
 
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+_WILDCARD_HOSTS = ("0.0.0.0", "::")
+
+
+def _configure_http(
+    mcp: FastMCP, host: str, port: int, allowed_hosts: Sequence[str] = ()
+) -> None:
+    """Point the streamable-HTTP transport at ``host``/``port``.
+
+    FastMCP rejects requests whose Host or Origin header it does not expect
+    (DNS rebinding protection) and fixes the expected names in its
+    constructor: for its default 127.0.0.1 only 127.0.0.1, localhost and
+    [::1]. ``build_server`` constructs it before the bind address is known,
+    so a server bound to a network address answered clients that reached it
+    by that address with "421 Invalid Host header". Keep the protection and
+    accept the loopback names, the bind address itself (unless it is a
+    wildcard) and every name in ``allowed_hosts``.
+    """
+    mcp.settings.host = host
+    mcp.settings.port = port
+    names = ["127.0.0.1", "localhost", "[::1]"]
+    if host not in (*_LOOPBACK_HOSTS, *_WILDCARD_HOSTS):
+        names.append(f"[{host}]" if ":" in host else host)
+    names.extend(allowed_hosts)
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[h for name in names for h in (name, f"{name}:*")],
+        allowed_origins=[
+            origin
+            for name in names
+            for scheme in ("http", "https")
+            for origin in (f"{scheme}://{name}", f"{scheme}://{name}:*")
+        ],
+    )
+
+
 def run_server(
     ctx: ServeContext,
     *,
     transport: str = "stdio",
     host: str = "127.0.0.1",
     port: int = 8080,
+    allowed_hosts: Sequence[str] = (),
 ) -> None:
     """Build the FastMCP server and run it on the given transport."""
     mcp = build_server(ctx)
@@ -712,8 +751,7 @@ def run_server(
     if transport == "stdio":
         mcp.run(transport="stdio")
     elif transport == "http":
-        mcp.settings.host = host
-        mcp.settings.port = port
+        _configure_http(mcp, host, port, allowed_hosts)
         logger.info(f"Serving wren MCP over streamable-http at {host}:{port}")
         mcp.run(transport="streamable-http")
     else:

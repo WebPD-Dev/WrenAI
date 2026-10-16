@@ -62,11 +62,23 @@ spawns the server over stdio:
 `cwd` must be inside the project (or pass `--project /path/to/project` in
 `args` instead). Restart the client after adding the config.
 
-For a server other machines/processes connect to, run
-`wren serve mcp --transport http --port 8080` and point the client at the
-Streamable HTTP endpoint on that host/port instead of spawning a process.
+For a server other machines/processes connect to, bind it to a network
+address and point the client at the Streamable HTTP endpoint on that
+address instead of spawning a process:
+
+```bash
+wren serve mcp --transport http --host 10.1.2.10 --port 8080 \
+  --allowed-host wren.example.internal
+```
+
+The server checks each request's `Host` header against DNS rebinding: it
+accepts `localhost`, the `--host` address and every `--allowed-host` name, and
+answers anything else with `421 Invalid Host header`. Bound to `0.0.0.0`, it
+accepts only `localhost` until you list the addresses and names clients use
+with `--allowed-host`.
+
 HTTP binds to `127.0.0.1` by default and ships no bearer-token auth in this
-version — keep it local.
+version — keep it on a trusted network.
 
 ## What the client gets
 

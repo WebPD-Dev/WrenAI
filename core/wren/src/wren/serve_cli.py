@@ -130,6 +130,15 @@ def serve_mcp(
     port: Annotated[
         int, typer.Option("--port", help="Bind port for --transport http.")
     ] = 8080,
+    allowed_host: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--allowed-host",
+            help="Another address or DNS name HTTP clients use to reach the "
+            "server (repeatable). localhost and the --host address are always "
+            "accepted; requests naming any other host get 421.",
+        ),
+    ] = None,
     project: Annotated[
         Optional[Path],
         typer.Option("--project", help="Override project root."),
@@ -255,4 +264,18 @@ def serve_mcp(
             allow_write=allow_write,
             no_connect=no_connect,
         )
-    run_server(ctx, transport=transport, host=host, port=port)
+    allowed_hosts = allowed_host or []
+    if transport == "http" and host in ("0.0.0.0", "::") and not allowed_hosts:
+        typer.echo(
+            f"Warning: bound to {host} without --allowed-host — only clients that "
+            "connect through localhost are accepted. Add --allowed-host "
+            "<address or DNS name> for each name remote clients use.",
+            err=True,
+        )
+    run_server(
+        ctx,
+        transport=transport,
+        host=host,
+        port=port,
+        allowed_hosts=allowed_hosts,
+    )

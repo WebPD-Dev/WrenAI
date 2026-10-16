@@ -405,6 +405,7 @@ Requires the `mcp` extra: `pip install 'wrenai[mcp]'`.
 | `--transport` | `stdio` | `stdio` or `http` |
 | `--host` | `127.0.0.1` | Bind host, `--transport http` only |
 | `--port` | `8080` | Bind port, `--transport http` only |
+| `--allowed-host` | none | Another address or DNS name HTTP clients use to reach the server; repeatable. `localhost` and the `--host` address are always accepted, any other `Host` header gets `421` |
 | `--project` | discovered | Override project root |
 | `--profile` | active profile | Connection profile name |
 | `--allow-write` | off | Enable the `store_query` write tool |

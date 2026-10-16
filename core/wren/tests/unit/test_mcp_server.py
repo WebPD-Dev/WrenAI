@@ -11,7 +11,12 @@ pytest.importorskip("mcp")
 
 import pyarrow as pa  # noqa: E402
 
-from wren.mcp_server import ServeContext, _workflow_text, build_server  # noqa: E402
+from wren.mcp_server import (  # noqa: E402
+    ServeContext,
+    _configure_http,
+    _workflow_text,
+    build_server,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -524,3 +529,59 @@ def test_query_cube_order_by_bad_spec_is_readable():
             order_by=["", "total_revenue:desc"],
             sql_only=True,
         )
+
+
+# ── HTTP transport ───────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("bind_host", "allowed_hosts", "request_host", "expected_status"),
+    [
+        ("10.1.2.10", [], "10.1.2.10:8080", 200),
+        ("0.0.0.0", ["10.1.2.10"], "10.1.2.10:8080", 200),
+        ("0.0.0.0", ["ct-wren.webpd.local"], "ct-wren.webpd.local", 200),
+        ("0.0.0.0", [], "127.0.0.1:8080", 200),
+        ("0.0.0.0", [], "10.1.2.10:8080", 421),
+        ("10.1.2.10", ["ct-wren.webpd.local"], "attacker.example:8080", 421),
+        ("127.0.0.1", [], "10.1.2.10:8080", 421),
+    ],
+    ids=[
+        "bind-address",
+        "allowed-address",
+        "allowed-name-without-port",
+        "wildcard-localhost",
+        "wildcard-unlisted-address",
+        "unlisted-name",
+        "loopback-only",
+    ],
+)
+def test_http_transport_accepts_only_expected_host_headers(
+    tmp_path, bind_host, allowed_hosts, request_host, expected_status
+):
+    """Clients may reach the server by its bind address or an allowed name;
+    any other Host header is still refused (DNS rebinding protection).
+    """
+    from starlette.testclient import TestClient  # noqa: PLC0415
+
+    mcp = build_server(_make_ctx(tmp_path))
+    _configure_http(mcp, bind_host, 8080, allowed_hosts)
+
+    with TestClient(
+        mcp.streamable_http_app(), base_url=f"http://{request_host}"
+    ) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"},
+                },
+            },
+            headers={"Accept": "application/json, text/event-stream"},
+        )
+
+    assert response.status_code == expected_status
